@@ -108,7 +108,7 @@ export async function GET(
     const storagePath = pdfDoc.data()?.storagePath;
 
     // ✅ CORRECT BUCKET
-    const bucket = getStorage().bucket("mind-docs.firebasestorage.app");
+    const bucket = getStorage().bucket(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!);
     const file = bucket.file(storagePath);
 
     const stream = file.createReadStream();
