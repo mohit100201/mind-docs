@@ -328,7 +328,7 @@ export default function PsychEdDashboard() {
                   </div>
                   <h4 className="text-2xl font-black text-slate-800">{sub.title}</h4>
                   <p className="text-sm text-slate-400 font-medium mt-2">
-                    {sub.locked ? "Restricted Content" : `${sub.files.length} Resources Available`}
+                   
                   </p>
                 </div>
               ))}
