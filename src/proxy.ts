@@ -17,7 +17,7 @@ export function proxy(request: NextRequest) {
   const token = request.cookies.get("token")?.value;
 
   // ✅ TEMPORARILY public dashboard
-  const publicRoutes = ["/login", "/signup"];
+  const publicRoutes = ["/login", "/signup", "/dashboard"];
   const isPublic = publicRoutes.some(route =>
     pathname.startsWith(route)
   );

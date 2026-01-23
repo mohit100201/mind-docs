@@ -7,10 +7,8 @@ import { useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase/firebase";
 import { Eye, EyeOff } from "lucide-react"; // Make sure to install lucide-react
-import { useAuthRedirect } from "@/hooks/useAuthRedirect";
 
 export default function LoginPage() {
-  useAuthRedirect();
   const router = useRouter();
 
   const [email, setEmail] = useState("");
@@ -100,7 +98,7 @@ export default function LoginPage() {
         </div>
 
         {error && (
-          <motion.div
+          <motion.div 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="p-3 rounded-lg bg-red-50 border border-red-100 text-red-600 text-sm text-center font-medium"
