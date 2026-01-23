@@ -11,7 +11,14 @@ import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth } from "@/lib/firebase/firebase";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { seedAcademicData } from "@/lib/firebase/seedAcademicData";
+import { seedPsychologyPdfs } from "@/lib/firebase/seedAcademicData";
+import { allowUserSpecificPdfs } from "@/lib/firebase/allowUserSpecificPdfs";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase/firebase";
+import { PdfViewer } from "@/components/PdfViewer";
+import { seedPsychologyFlashcards } from "@/lib/firebase/flashCardsSeed";
+
+
 
 
 
@@ -110,27 +117,84 @@ export default function PsychEdDashboard() {
   });
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [allowedPdfs, setAllowedPdfs] = useState<any[]>([]);
+  const [allowedFlashcards, setAllowedFlashcards] = useState<any[]>([]);
+  const [activePdfId, setActivePdfId] = useState<string | null>(null);
+  const [idToken, setIdToken] = useState<string | null>(null);
+
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (currentUser) => {
+    if (!user) return;
+
+    const fetchAllowedContent = async () => {
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      if (!userSnap.exists()) return;
+
+      const { allowedPdfs = [], allowedFlashCards = [] } = userSnap.data();
+
+      // 🔹 Fetch notes
+      if (allowedPdfs.length > 0) {
+        const notesQuery = query(
+          collection(db, "pdfs"),
+          where("__name__", "in", allowedPdfs)
+        );
+        const notesSnap = await getDocs(notesQuery);
+        setAllowedPdfs(
+          notesSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        );
+      }
+
+      // 🔹 Fetch flashcards
+      if (allowedFlashCards.length > 0) {
+        const flashQuery = query(
+          collection(db, "pdfs"),
+          where("__name__", "in", allowedFlashCards)
+        );
+        const flashSnap = await getDocs(flashQuery);
+        setAllowedFlashcards(
+          flashSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        );
+      }
+    };
+
+    fetchAllowedContent();
+  }, [user]);
+
+
+
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
-        router.push("/login"); // 🔒 protect dashboard
+        router.push("/login");
       } else {
         setUser(currentUser);
+        const token = await currentUser.getIdToken();
+        setIdToken(token);
       }
     });
 
     return () => unsub();
   }, [router]);
 
+  const visibleItems =
+    nav.folderData?.title === "Flashcards"
+      ? allowedFlashcards
+      : allowedPdfs;
+
+
+
   const handleLogout = async () => {
     await signOut(auth);
     router.push("/login");
   };
 
-  useEffect(()=>{
-    seedAcademicData()
-  },[])
+  useEffect(() => {
+    // seedPsychologyPdfs()
+    // allowUserSpecificPdfs()
+    //  seedPsychologyPdfs();
+    // seedPsychologyFlashcards();
+  }, [])
 
 
 
@@ -278,26 +342,49 @@ export default function PsychEdDashboard() {
                 <h3 className="text-3xl font-black text-slate-800">{nav.folderData.title}</h3>
                 <p className="text-slate-400 font-medium tracking-tight">Select a document to view or download.</p>
               </div>
-              {nav.folderData.files.map((file, i) => (
-                <div key={i} className="flex justify-between items-center p-6 bg-white border border-slate-100 rounded-[2rem] hover:border-indigo-500 transition-all shadow-sm group">
+              {visibleItems.map((pdf) => (
+                <div key={pdf.id} className="flex justify-between items-center p-6 bg-white border border-slate-100 rounded-[2rem]">
                   <div className="flex items-center gap-5">
-                    <div className="p-3 bg-rose-50 text-rose-500 rounded-2xl group-hover:bg-rose-500 group-hover:text-white transition-colors">
-                      <FileText size={24} />
-                    </div>
+                    <FileText size={24} />
                     <div>
-                      <p className="font-bold text-slate-800">{file.name}</p>
-                      <p className="text-xs text-slate-400 font-medium">{file.size}</p>
+                      <p className="font-bold text-slate-800">{pdf.title}</p>
+                      <p className="text-xs text-slate-400 font-medium">
+                        {pdf.section === "flashcards" ? "Flashcards" : "Detailed Notes"}
+                      </p>
                     </div>
                   </div>
-                  <button className="px-6 py-2.5 bg-white border-2 border-slate-900 rounded-xl font-bold text-sm hover:bg-slate-900 hover:text-white transition-all">
+
+                  <button
+                    onClick={() => setActivePdfId(pdf.id)}
+                    className="px-6 py-2.5 border-2 border-slate-900 rounded-xl font-bold"
+                  >
                     View PDF
                   </button>
                 </div>
               ))}
+
+
             </div>
           )}
 
         </div>
+        {activePdfId && (
+          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
+            <div className="bg-white w-[90vw] h-[90vh] rounded-xl overflow-hidden relative">
+
+              <button
+                onClick={() => setActivePdfId(null)}
+                className="absolute top-4 right-4 z-50 bg-black text-white px-4 py-2 rounded"
+              >
+                Close
+              </button>
+
+              <PdfViewer pdfId={activePdfId} />
+
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   );
