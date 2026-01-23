@@ -340,7 +340,7 @@ export default function PsychEdDashboard() {
             <div className="max-w-4xl mx-auto space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               <div className="mb-8">
                 <h3 className="text-3xl font-black text-slate-800">{nav.folderData.title}</h3>
-                <p className="text-slate-400 font-medium tracking-tight">Select a document to view or download.</p>
+                <p className="text-slate-400 font-medium tracking-tight">Select a document to view.</p>
               </div>
               {visibleItems.map((pdf) => (
                 <div key={pdf.id} className="flex justify-between items-center p-6 bg-white border border-slate-100 rounded-[2rem]">
