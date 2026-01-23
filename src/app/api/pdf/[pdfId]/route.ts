@@ -6,62 +6,6 @@ import { getStorage } from "firebase-admin/storage";
 
 initAdmin();
 
-// export async function GET(
-//   req: NextRequest,
-//   context: { params: Promise<{ pdfId: string }> }
-// ) {
-//   try {
-//     // ✅ FIX: unwrap params
-//     const { pdfId } = await context.params;
-
-//     const authHeader = req.headers.get("authorization");
-//     if (!authHeader) {
-//       return new NextResponse("Unauthorized", { status: 401 });
-//     }
-
-//     const token = authHeader.replace("Bearer ", "");
-//     const decoded = await getAuth().verifyIdToken(token);
-
-//     console.log("👤 UID:", decoded.uid);
-//     console.log("📄 PDF ID:", pdfId);
-
-//     const db = getFirestore();
-//     const userDoc = await db.doc(`users/${decoded.uid}`).get();
-
-//     if (!userDoc.exists) {
-//       return new NextResponse("Forbidden", { status: 403 });
-//     }
-
-//     const allowed = userDoc.data()?.allowedPdfs || [];
-//     if (!allowed.includes(pdfId)) {
-//       return new NextResponse("Forbidden", { status: 403 });
-//     }
-
-//     const pdfDoc = await db.doc(`pdfs/${pdfId}`).get();
-//     if (!pdfDoc.exists) {
-//       return new NextResponse("Not Found", { status: 404 });
-//     }
-
-//     const storagePath = pdfDoc.data()?.storagePath;
-//     const bucket = getStorage().bucket("mind-docs.firebasestorage.app");
-// const file = bucket.file(storagePath);
-
-//     const stream = file.createReadStream();
-
-//     return new NextResponse(stream as any, {
-//       headers: {
-//         "Content-Type": "application/pdf",
-//         "Content-Disposition": "inline",
-//         "Cache-Control": "no-store",
-//       },
-//     });
-//   } catch (err) {
-//     console.error("❌ PDF API ERROR:", err);
-//     return new NextResponse("Server Error", { status: 500 });
-//   }
-// }
-
-
 export async function GET(
   req: NextRequest,
   context: { params: Promise<{ pdfId: string }> }
@@ -69,6 +13,7 @@ export async function GET(
   try {
     const { pdfId } = await context.params;
 
+    // 🔐 Auth header
     const authHeader = req.headers.get("authorization");
     if (!authHeader) {
       return new NextResponse("Unauthorized", { status: 401 });
@@ -77,9 +22,7 @@ export async function GET(
     const token = authHeader.replace("Bearer ", "");
     const decoded = await getAuth().verifyIdToken(token);
 
-    console.log("👤 UID:", decoded.uid);
-    console.log("📄 PDF ID:", pdfId);
-
+    // 🔎 Check user permissions
     const db = getFirestore();
     const userDoc = await db.doc(`users/${decoded.uid}`).get();
 
@@ -92,14 +35,11 @@ export async function GET(
       allowedFlashCards = [],
     } = userDoc.data() || {};
 
-    const hasAccess =
-      allowedPdfs.includes(pdfId) ||
-      allowedFlashCards.includes(pdfId);
-
-    if (!hasAccess) {
+    if (!allowedPdfs.includes(pdfId) && !allowedFlashCards.includes(pdfId)) {
       return new NextResponse("Forbidden", { status: 403 });
     }
 
+    // 📄 Get PDF doc
     const pdfDoc = await db.doc(`pdfs/${pdfId}`).get();
     if (!pdfDoc.exists) {
       return new NextResponse("Not Found", { status: 404 });
@@ -107,23 +47,20 @@ export async function GET(
 
     const storagePath = pdfDoc.data()?.storagePath;
 
-    // ✅ CORRECT BUCKET
-    const bucket = getStorage().bucket(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!);
+    // ✅ Generate SIGNED URL (mobile safe)
+    const bucket = getStorage().bucket(
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!
+    );
     const file = bucket.file(storagePath);
 
-    const stream = file.createReadStream();
-
-    return new NextResponse(stream as any, {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": "inline",
-        "Cache-Control": "no-store",
-      },
+    const [signedUrl] = await file.getSignedUrl({
+      action: "read",
+      expires: Date.now() + 10 * 60 * 1000, // 10 minutes
     });
+
+    return NextResponse.json({ url: signedUrl });
   } catch (err) {
     console.error("❌ PDF API ERROR:", err);
     return new NextResponse("Server Error", { status: 500 });
   }
 }
-
-
