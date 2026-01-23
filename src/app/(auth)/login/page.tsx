@@ -4,9 +4,13 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { onAuthStateChanged, signInWithEmailAndPassword } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  sendEmailVerification,
+} from "firebase/auth";
 import { auth } from "@/lib/firebase/firebase";
-import { Eye, EyeOff } from "lucide-react"; // Make sure to install lucide-react
+import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -15,13 +19,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
 
-  
-
+  // ✅ FIXED: Auto redirect ONLY if verified
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
+      if (user && user.emailVerified) {
         router.replace("/dashboard");
       }
     });
@@ -32,13 +36,26 @@ export default function LoginPage() {
   const handleSignIn = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     setError("");
+    setInfo("");
     setLoading(true);
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const res = await signInWithEmailAndPassword(auth, email, password);
+
+      // 🚫 BLOCK unverified users
+      if (!res.user.emailVerified) {
+        await sendEmailVerification(res.user);
+
+        setError(
+          "Your email is not verified. We've re-sent the verification email. Please verify before logging in."
+        );
+
+        return;
+      }
+
+      // ✅ Verified user → dashboard
       router.replace("/dashboard");
     } catch (err: any) {
-      // Custom Error Mapping for Login
       switch (err.code) {
         case "auth/user-not-found":
           setError("User not found. Please sign up for an account.");
@@ -73,7 +90,7 @@ export default function LoginPage() {
 
       <form className="mt-8 space-y-6">
         <div className="space-y-4">
-          <div className="group">
+          <div>
             <label className="block text-sm font-semibold text-slate-700">
               Email Address
             </label>
@@ -81,12 +98,12 @@ export default function LoginPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full px-4 py-3 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+              className="mt-1 block w-full px-4 py-3 border rounded-xl bg-slate-50"
               placeholder="name@company.com"
             />
           </div>
 
-          <div className="group">
+          <div>
             <label className="block text-sm font-semibold text-slate-700">
               Password
             </label>
@@ -95,13 +112,13 @@ export default function LoginPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full px-4 py-3 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                className="mt-1 block w-full px-4 py-3 border rounded-xl bg-slate-50"
                 placeholder="••••••••"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
               >
                 {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
@@ -109,8 +126,9 @@ export default function LoginPage() {
           </div>
         </div>
 
+        {/* ERROR MESSAGE */}
         {error && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="p-3 rounded-lg bg-red-50 border border-red-100 text-red-600 text-sm text-center font-medium"
@@ -119,12 +137,23 @@ export default function LoginPage() {
           </motion.div>
         )}
 
+        {/* INFO MESSAGE */}
+        {info && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-blue-600 text-sm text-center font-medium"
+          >
+            {info}
+          </motion.div>
+        )}
+
         <motion.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           disabled={loading}
           onClick={handleSignIn}
-          className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 transition-colors disabled:opacity-70"
+          className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 disabled:opacity-70"
         >
           {loading ? "Signing in..." : "Sign In"}
         </motion.button>

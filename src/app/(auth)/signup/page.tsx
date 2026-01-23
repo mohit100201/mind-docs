@@ -4,9 +4,12 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  updateProfile,
+  sendEmailVerification,
+} from "firebase/auth";
 import { auth } from "@/lib/firebase/firebase";
-// Import icons for the password eye
 import { Eye, EyeOff } from "lucide-react";
 
 export default function SignupPage() {
@@ -15,29 +18,43 @@ export default function SignupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false); // Eye icon state
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSignup = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     setError("");
+    setSuccess("");
     setLoading(true);
 
     try {
+      // 1️⃣ Create user
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         email,
         password
       );
 
+      // 2️⃣ Set display name
       await updateProfile(userCredential.user, {
         displayName: name,
       });
 
-      router.push("/dashboard");
+      // 3️⃣ Send verification email (OTP-like)
+      await sendEmailVerification(userCredential.user);
+
+      // 4️⃣ UX message
+      setSuccess(
+        "Verification email sent. Please check your inbox and verify your email before logging in."
+      );
+
+      // Optional: redirect after few seconds
+      setTimeout(() => {
+        router.push("/login");
+      }, 2500);
     } catch (err: any) {
-      // Custom Error Mapping
       switch (err.code) {
         case "auth/email-already-in-use":
           setError("Email already exists. Please use a different one.");
@@ -110,11 +127,10 @@ export default function SignupPage() {
                 placeholder="••••••••"
                 required
               />
-              {/* Eye Icon Button */}
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
               >
                 {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
@@ -122,13 +138,25 @@ export default function SignupPage() {
           </div>
         </div>
 
+        {/* ERROR MESSAGE */}
         {error && (
-          <motion.p 
+          <motion.p
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-sm text-red-600 text-center font-medium bg-red-50 py-2 rounded-lg border border-red-100"
           >
             {error}
+          </motion.p>
+        )}
+
+        {/* SUCCESS MESSAGE */}
+        {success && (
+          <motion.p
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-sm text-green-700 text-center font-medium bg-green-50 py-2 rounded-lg border border-green-100"
+          >
+            {success}
           </motion.p>
         )}
 
