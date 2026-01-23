@@ -8,8 +8,10 @@ import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { auth } from "@/lib/firebase/firebase";
 // Import icons for the password eye
 import { Eye, EyeOff } from "lucide-react";
+import { useAuthRedirect } from "@/hooks/useAuthRedirect";
 
 export default function SignupPage() {
+  useAuthRedirect();
   const router = useRouter();
 
   const [name, setName] = useState("");
@@ -123,7 +125,7 @@ export default function SignupPage() {
         </div>
 
         {error && (
-          <motion.p 
+          <motion.p
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-sm text-red-600 text-center font-medium bg-red-50 py-2 rounded-lg border border-red-100"
