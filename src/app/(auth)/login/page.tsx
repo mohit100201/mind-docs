@@ -7,9 +7,12 @@ import { useEffect, useState } from "react";
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   sendEmailVerification,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase/firebase";
+import { isUserAdmin, syncUserProfile } from "@/lib/firebase/adminService";
 import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
@@ -22,11 +25,24 @@ export default function LoginPage() {
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ✅ FIXED: Auto redirect ONLY if verified
+  // Auto-redirect if already logged in
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user && user.emailVerified) {
-        router.replace("/dashboard");
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        const isAdmin = isUserAdmin(currentUser.email);
+        if (isAdmin || currentUser.emailVerified) {
+          const profile = await syncUserProfile(
+            currentUser.uid,
+            currentUser.email || "",
+            currentUser.displayName || ""
+          );
+
+          if (profile.role === "admin" || isAdmin) {
+            router.replace("/admin");
+          } else {
+            router.replace("/dashboard");
+          }
+        }
       }
     });
 
@@ -39,24 +55,59 @@ export default function LoginPage() {
     setInfo("");
     setLoading(true);
 
+    const cleanEmail = email.trim();
+    const isAdminTarget = isUserAdmin(cleanEmail);
+
     try {
-      const res = await signInWithEmailAndPassword(auth, email, password);
+      let res;
+      try {
+        res = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      } catch (authErr: unknown) {
+        const errObj = authErr as { code?: string; message?: string };
+        // If this is the designated admin account and it doesn't exist yet, auto-provision it
+        if (
+          isAdminTarget &&
+          (errObj.code === "auth/user-not-found" ||
+            errObj.code === "auth/invalid-credential")
+        ) {
+          try {
+            res = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+            await updateProfile(res.user, { displayName: "Admin" });
+          } catch {
+            throw authErr;
+          }
+        } else {
+          throw authErr;
+        }
+      }
 
-      // 🚫 BLOCK unverified users
-      if (!res.user.emailVerified) {
+      // Sync user profile in Firestore
+      const profile = await syncUserProfile(
+        res.user.uid,
+        res.user.email || cleanEmail,
+        res.user.displayName || (isAdminTarget ? "Admin" : "")
+      );
+
+      const isActuallyAdmin = profile.role === "admin" || isAdminTarget;
+
+      // 🚫 BLOCK unverified regular students (exempt admin)
+      if (!isActuallyAdmin && !res.user.emailVerified) {
         await sendEmailVerification(res.user);
-
         setError(
           "Your email is not verified. We've re-sent the verification email. Please verify before logging in."
         );
-
         return;
       }
 
-      // ✅ Verified user → dashboard
-      router.replace("/dashboard");
-    } catch (err: any) {
-      switch (err.code) {
+      // Route according to role
+      if (isActuallyAdmin) {
+        router.replace("/admin");
+      } else {
+        router.replace("/dashboard");
+      }
+    } catch (err: unknown) {
+      const authError = err as { code?: string; message?: string };
+      switch (authError.code) {
         case "auth/user-not-found":
           setError("User not found. Please sign up for an account.");
           break;
@@ -67,10 +118,10 @@ export default function LoginPage() {
           setError("Please enter a valid email address.");
           break;
         case "auth/invalid-credential":
-          setError("Invalid login details. Check your email or sign up.");
+          setError("Invalid login credentials. Please check your email and password.");
           break;
         default:
-          setError("Failed to sign in. Please try again.");
+          setError(authError.message || "Failed to sign in. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -98,7 +149,7 @@ export default function LoginPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full px-4 py-3 border rounded-xl bg-slate-50"
+              className="mt-1 block w-full px-4 py-3 border border-slate-300 rounded-xl bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-medium"
               placeholder="name@company.com"
             />
           </div>
@@ -112,7 +163,7 @@ export default function LoginPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full px-4 py-3 border rounded-xl bg-slate-50"
+                className="mt-1 block w-full px-4 py-3 border border-slate-300 rounded-xl bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-medium pr-10"
                 placeholder="••••••••"
               />
               <button
@@ -160,7 +211,7 @@ export default function LoginPage() {
       </form>
 
       <p className="text-center text-sm text-slate-600 mt-6">
-        Don't have an account?{" "}
+        Don&apos;t have an account?{" "}
         <Link
           href="/signup"
           className="font-bold text-indigo-600 hover:underline"

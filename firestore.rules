@@ -1,0 +1,38 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is the admin
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "mohitkhandelwal9784@gmail.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin")
+      );
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // User can read their own profile, or Admin can read any profile
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // User can create/update their own profile, or Admin can manage any profile
+      allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // PDFs collection (study materials catalog)
+    match /pdfs/{pdfId} {
+      // Authenticated users can read document metadata
+      allow read: if isAuthenticated();
+      // Only admins can add or update PDF metadata
+      allow write: if isAdmin();
+    }
+  }
+}
+

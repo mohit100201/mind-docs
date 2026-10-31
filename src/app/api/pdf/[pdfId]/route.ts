@@ -11,6 +11,14 @@ export async function GET(
   context: { params: Promise<{ pdfId: string }> }
 ) {
   try {
+    const adminInitialized = initAdmin();
+    if (!adminInitialized) {
+      return NextResponse.json(
+        { error: "Firebase Admin is not configured. PDFs load directly via client SDK." },
+        { status: 501 }
+      );
+    }
+
     const { pdfId } = await context.params;
 
     // 🔐 Auth header
@@ -30,12 +38,18 @@ export async function GET(
       return new NextResponse("Forbidden", { status: 403 });
     }
 
+    const userData = userDoc.data() || {};
+    const adminEmail = (process.env.ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_EMAIL || "mohitkhandelwal9784@gmail.com").toLowerCase();
+    const isAdmin =
+      userData.role === "admin" ||
+      decoded.email?.toLowerCase() === adminEmail;
+
     const {
       allowedPdfs = [],
       allowedFlashCards = [],
-    } = userDoc.data() || {};
+    } = userData;
 
-    if (!allowedPdfs.includes(pdfId) && !allowedFlashCards.includes(pdfId)) {
+    if (!isAdmin && !allowedPdfs.includes(pdfId) && !allowedFlashCards.includes(pdfId)) {
       return new NextResponse("Forbidden", { status: 403 });
     }
 
@@ -48,9 +62,10 @@ export async function GET(
     const storagePath = pdfDoc.data()?.storagePath;
 
     // ✅ Generate SIGNED URL (mobile safe)
-    const bucket = getStorage().bucket(
-      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!
-    );
+    const storageBucket =
+      process.env.FIREBASE_STORAGE_BUCKET ||
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+    const bucket = getStorage().bucket(storageBucket!);
     const file = bucket.file(storagePath);
 
     const [signedUrl] = await file.getSignedUrl({

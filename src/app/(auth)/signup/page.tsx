@@ -10,6 +10,7 @@ import {
   sendEmailVerification,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase/firebase";
+import { syncUserProfile } from "@/lib/firebase/adminService";
 import { Eye, EyeOff } from "lucide-react";
 
 export default function SignupPage() {
@@ -42,20 +43,24 @@ export default function SignupPage() {
         displayName: name,
       });
 
-      // 3️⃣ Send verification email (OTP-like)
+      // 3️⃣ Sync into Firestore users collection
+      await syncUserProfile(userCredential.user.uid, email, name);
+
+      // 4️⃣ Send verification email
       await sendEmailVerification(userCredential.user);
 
-      // 4️⃣ UX message
+      // 5️⃣ UX message
       setSuccess(
         "Verification email sent. Please check your inbox and verify your email before logging in."
       );
 
-      // Optional: redirect after few seconds
+      // Redirect to login after 2 seconds
       setTimeout(() => {
         router.push("/login");
-      }, 2500);
-    } catch (err: any) {
-      switch (err.code) {
+      }, 2000);
+    } catch (err: unknown) {
+      const authError = err as { code?: string; message?: string };
+      switch (authError.code) {
         case "auth/email-already-in-use":
           setError("Email already exists. Please use a different one.");
           break;
@@ -66,7 +71,7 @@ export default function SignupPage() {
           setError("Password should be at least 6 characters.");
           break;
         default:
-          setError("An error occurred. Please try again.");
+          setError(authError.message || "An error occurred. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -80,7 +85,7 @@ export default function SignupPage() {
           Create Account
         </h2>
         <p className="mt-2 text-slate-500">
-          Start your 14-day free trial today.
+          Access your psychology study materials and notes.
         </p>
       </div>
 
@@ -94,7 +99,7 @@ export default function SignupPage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 block w-full px-4 py-3 bg-slate-50 border rounded-xl"
+              className="mt-1 block w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-medium"
               placeholder="John Doe"
               required
             />
@@ -108,7 +113,7 @@ export default function SignupPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full px-4 py-3 bg-slate-50 border rounded-xl"
+              className="mt-1 block w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-medium"
               placeholder="name@company.com"
               required
             />
@@ -123,7 +128,7 @@ export default function SignupPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full px-4 py-3 bg-slate-50 border rounded-xl"
+                className="mt-1 block w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-medium pr-10"
                 placeholder="••••••••"
                 required
               />

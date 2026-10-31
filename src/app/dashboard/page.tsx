@@ -1,26 +1,33 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import {
-  Folder, Lock, Search, FileText, GraduationCap,
-  LayoutDashboard, LogOut, ChevronRight, Award,
-  BookOpen, Users, ArrowLeft, Bell
+  Folder,
+  Lock,
+  FileText,
+  GraduationCap,
+  LayoutDashboard,
+  LogOut,
+  ChevronRight,
+  Award,
+  BookOpen,
+  Users,
+  ArrowLeft,
+  Bell,
+  Shield,
 } from "lucide-react";
 
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
-import { auth } from "@/lib/firebase/firebase";
+import { auth, db } from "@/lib/firebase/firebase";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { seedPsychologyPdfs } from "@/lib/firebase/seedAcademicData";
-import { allowUserSpecificPdfs } from "@/lib/firebase/allowUserSpecificPdfs";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
-import { db } from "@/lib/firebase/firebase";
 import { PdfViewer } from "@/components/PdfViewer";
-import { seedPsychologyFlashcards } from "@/lib/firebase/flashCardsSeed";
-
-
-
-
+import { isUserAdmin, syncUserProfile } from "@/lib/firebase/adminService";
+import {
+  DETAILED_NOTES_CATALOG,
+  FLASHCARDS_CATALOG,
+  AcademicPdfItem,
+} from "@/lib/firebase/academicContent";
 
 /* ================= TYPES ================= */
 
@@ -60,18 +67,18 @@ const ACADEMIC_DATA: ClassData[] = [
         locked: true,
         files: [
           { name: "What_is_Psychology_Ch1.pdf", size: "1.2MB" },
-          { name: "Methods_of_Enquiry_Ch2.pdf", size: "2.4MB" }
-        ]
+          { name: "Methods_of_Enquiry_Ch2.pdf", size: "2.4MB" },
+        ],
       },
       {
         title: "Flowcharts",
         locked: true,
         files: [
           { name: "Human_Development_Visual.pdf", size: "0.8MB" },
-          { name: "Sensory_Attentional_Processes.pdf", size: "1.1MB" }
-        ]
-      }
-    ]
+          { name: "Sensory_Attentional_Processes.pdf", size: "1.1MB" },
+        ],
+      },
+    ],
   },
   {
     id: "class-12",
@@ -83,28 +90,28 @@ const ACADEMIC_DATA: ClassData[] = [
         locked: false,
         files: [
           { name: "Self_and_Personality.pdf", size: "2.5MB" },
-          { name: "Psychological_Disorders.pdf", size: "3.2MB" }
-        ]
+          { name: "Psychological_Disorders.pdf", size: "3.2MB" },
+        ],
       },
       {
         title: "Flashcards",
         locked: false,
         files: [
-          { name: "Therapeutic_Approaches_Recall.pdf", size: "1.5MB" }
-        ]
+          { name: "Therapeutic_Approaches_Recall.pdf", size: "1.5MB" },
+        ],
       },
       {
         title: "MCQ Practice",
         locked: true,
-        files: []
+        files: [],
       },
       {
         title: "Case Base Practice",
         locked: true,
-        files: []
-      }
-    ]
-  }
+        files: [],
+      },
+    ],
+  },
 ];
 
 /* ================= COMPONENT ================= */
@@ -113,55 +120,126 @@ export default function PsychEdDashboard() {
   const [nav, setNav] = useState<NavState>({
     level: "main",
     classData: null,
-    folderData: null
+    folderData: null,
   });
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [allowedPdfs, setAllowedPdfs] = useState<any[]>([]);
-  const [allowedFlashcards, setAllowedFlashcards] = useState<any[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [allowedPdfs, setAllowedPdfs] = useState<AcademicPdfItem[]>([]);
+  const [allowedFlashcards, setAllowedFlashcards] = useState<AcademicPdfItem[]>([]);
   const [activePdfId, setActivePdfId] = useState<string | null>(null);
-  const [idToken, setIdToken] = useState<string | null>(null);
 
+  // Close viewer with Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setActivePdfId(null);
+      }
+    };
+    if (activePdfId) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activePdfId]);
 
   useEffect(() => {
     if (!user) return;
 
     const fetchAllowedContent = async () => {
       const userSnap = await getDoc(doc(db, "users", user.uid));
-      if (!userSnap.exists()) return;
+      let userData = userSnap.exists() ? userSnap.data() : null;
 
-      const { allowedPdfs = [], allowedFlashCards = [] } = userSnap.data();
+      if (!userData && user.email) {
+        try {
+          const usersRef = collection(db, "users");
+          const snap = await getDocs(usersRef);
+          const found = snap.docs.find(
+            (d) =>
+              (d.data().email && d.data().email.toLowerCase() === user.email?.toLowerCase()) ||
+              d.id.toLowerCase().startsWith(user.uid.substring(0, 7).toLowerCase())
+          );
+          if (found) {
+            userData = found.data();
+          }
+        } catch {
+          // fallback ignore
+        }
+      }
+      if (!userData) userData = {};
+      const userIsAdmin = isUserAdmin(user.email, userData.role);
+      setIsAdmin(userIsAdmin);
 
-      // 🔹 Fetch notes
-      if (allowedPdfs.length > 0) {
-        const notesQuery = query(
-          collection(db, "pdfs"),
-          where("__name__", "in", allowedPdfs)
-        );
-        const notesSnap = await getDocs(notesQuery);
-        setAllowedPdfs(
-          notesSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-        );
+      // 🔹 If admin, grant all available content
+      if (userIsAdmin) {
+        setAllowedPdfs(DETAILED_NOTES_CATALOG);
+        setAllowedFlashcards(FLASHCARDS_CATALOG);
+        return;
       }
 
-      // 🔹 Fetch flashcards
-      if (allowedFlashCards.length > 0) {
-        const flashQuery = query(
-          collection(db, "pdfs"),
-          where("__name__", "in", allowedFlashCards)
-        );
-        const flashSnap = await getDocs(flashQuery);
-        setAllowedFlashcards(
-          flashSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-        );
+      const { allowedPdfs: userNotes = [], allowedFlashCards: userFlash = [] } =
+        userData;
+
+      // 🔹 Fetch assigned notes
+      if (userNotes.length > 0) {
+        try {
+          const notesQuery = query(
+            collection(db, "pdfs"),
+            where("__name__", "in", userNotes)
+          );
+          const notesSnap = await getDocs(notesQuery);
+          if (!notesSnap.empty) {
+            setAllowedPdfs(
+              notesSnap.docs.map((d) => ({
+                id: d.id,
+                ...(d.data() as Omit<AcademicPdfItem, "id">),
+              }))
+            );
+          } else {
+            setAllowedPdfs(
+              DETAILED_NOTES_CATALOG.filter((item) => userNotes.includes(item.id))
+            );
+          }
+        } catch {
+          setAllowedPdfs(
+            DETAILED_NOTES_CATALOG.filter((item) => userNotes.includes(item.id))
+          );
+        }
+      } else {
+        setAllowedPdfs([]);
+      }
+
+      // 🔹 Fetch assigned flashcards
+      if (userFlash.length > 0) {
+        try {
+          const flashQuery = query(
+            collection(db, "pdfs"),
+            where("__name__", "in", userFlash)
+          );
+          const flashSnap = await getDocs(flashQuery);
+          if (!flashSnap.empty) {
+            setAllowedFlashcards(
+              flashSnap.docs.map((d) => ({
+                id: d.id,
+                ...(d.data() as Omit<AcademicPdfItem, "id">),
+              }))
+            );
+          } else {
+            setAllowedFlashcards(
+              FLASHCARDS_CATALOG.filter((item) => userFlash.includes(item.id))
+            );
+          }
+        } catch {
+          setAllowedFlashcards(
+            FLASHCARDS_CATALOG.filter((item) => userFlash.includes(item.id))
+          );
+        }
+      } else {
+        setAllowedFlashcards([]);
       }
     };
 
     fetchAllowedContent();
   }, [user]);
-
-
-
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (currentUser) => {
@@ -169,34 +247,39 @@ export default function PsychEdDashboard() {
         router.push("/login");
       } else {
         setUser(currentUser);
-        const token = await currentUser.getIdToken();
-        setIdToken(token);
+        await syncUserProfile(
+          currentUser.uid,
+          currentUser.email || "",
+          currentUser.displayName || ""
+        );
       }
     });
 
     return () => unsub();
   }, [router]);
 
+  // Handle Escape key to close full-screen viewer
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && activePdfId) {
+        if (!document.fullscreenElement) {
+          setActivePdfId(null);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activePdfId]);
+
   const visibleItems =
     nav.folderData?.title === "Flashcards"
       ? allowedFlashcards
       : allowedPdfs;
 
-
-
   const handleLogout = async () => {
     await signOut(auth);
     router.push("/login");
   };
-
-  useEffect(() => {
-    // seedPsychologyPdfs()
-    // allowUserSpecificPdfs()
-    //  seedPsychologyPdfs();
-    // seedPsychologyFlashcards();
-  }, [])
-
-
 
   const goBack = () => {
     if (nav.level === "files") {
@@ -208,7 +291,6 @@ export default function PsychEdDashboard() {
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans">
-
       {/* ================= SIDEBAR ================= */}
       <aside className="w-96 bg-white border-r hidden xl:flex flex-col shadow-sm">
         <div className="p-8 border-b bg-gradient-to-b from-indigo-50/30 to-white">
@@ -227,7 +309,9 @@ export default function PsychEdDashboard() {
             </div>
           </div>
 
-          <h1 className="text-2xl font-black text-center text-slate-800 tracking-tight">Saloni Dangayach</h1>
+          <h1 className="text-2xl font-black text-center text-slate-800 tracking-tight">
+            Saloni Dangayach
+          </h1>
           <p className="text-[10px] text-center text-indigo-600 font-black uppercase tracking-[0.2em] mt-1">
             PsychEd by Healora
           </p>
@@ -236,14 +320,59 @@ export default function PsychEdDashboard() {
         <div className="p-6 flex-1 space-y-8 overflow-y-auto">
           {/* Stats Section */}
           <div className="space-y-4">
-            <SidebarStat icon={<Users size={16} />} title="100+ Sessions" sub="Clinical Counseling" color="bg-indigo-50 text-indigo-600" />
-            <SidebarStat icon={<GraduationCap size={16} />} title="MSc Clinical Psych" sub="CHRIST University, Delhi NCR" color="bg-rose-50 text-rose-600" />
-            <SidebarStat icon={<Award size={16} />} title="School Counselor" sub="Gurukul Public School, Jaipur" color="bg-emerald-50 text-emerald-600" />
+            <SidebarStat
+              icon={<Users size={16} />}
+              title="100+ Sessions"
+              sub="Clinical Counseling"
+              color="bg-indigo-50 text-indigo-600"
+            />
+            <SidebarStat
+              icon={<GraduationCap size={16} />}
+              title="MSc Clinical Psych"
+              sub="CHRIST University, Delhi NCR"
+              color="bg-rose-50 text-rose-600"
+            />
+            <SidebarStat
+              icon={<Award size={16} />}
+              title="School Counselor"
+              sub="Gurukul Public School, Jaipur"
+              color="bg-emerald-50 text-emerald-600"
+            />
           </div>
 
           <nav className="space-y-2 pt-6 border-t border-slate-100">
-            <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active={nav.level === "main"} />
-            <NavItem icon={<FileText size={18} />} label="Resource Library" active={nav.level !== "main"} />
+            <NavItem
+              icon={<LayoutDashboard size={18} />}
+              label="Dashboard"
+              active={nav.level === "main"}
+              onClick={() =>
+                setNav({ level: "main", classData: null, folderData: null })
+              }
+            />
+            <NavItem
+              icon={<FileText size={18} />}
+              label="Resource Library"
+              active={nav.level !== "main"}
+              onClick={() => {
+                const cls12 = ACADEMIC_DATA.find((c) => c.id === "class-12");
+                if (cls12) {
+                  setNav({ level: "sub", classData: cls12, folderData: null });
+                }
+              }}
+            />
+
+            {isAdmin && (
+              <button
+                onClick={() => router.push("/admin")}
+                className="w-full flex items-center justify-between px-6 py-4 rounded-2xl font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all border border-indigo-100 mt-4"
+              >
+                <div className="flex items-center gap-3">
+                  <Shield size={18} className="text-indigo-600" />
+                  <span className="text-sm">Admin Console</span>
+                </div>
+                <ChevronRight size={16} />
+              </button>
+            )}
           </nav>
         </div>
       </aside>
@@ -253,18 +382,36 @@ export default function PsychEdDashboard() {
         <header className="h-20 bg-white border-b px-8 flex items-center justify-between shadow-sm shrink-0">
           <div className="flex items-center gap-4">
             {nav.level !== "main" && (
-              <button onClick={goBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors">
+              <button
+                onClick={goBack}
+                className="p-2 rounded-full hover:bg-slate-100 transition-colors"
+              >
                 <ArrowLeft size={20} className="text-slate-600" />
               </button>
             )}
 
-            <h2 className="font-bold text-slate-800">
-              Welcome back, {user?.displayName?.split(" ")[0] ?? "Student"}!
-            </h2>
-
+            <div className="flex items-center gap-3">
+              <h2 className="font-bold text-slate-800 text-lg">
+                Welcome back, {user?.displayName?.split(" ")[0] ?? "Student"}!
+              </h2>
+              {isAdmin && (
+                <span className="bg-purple-100 text-purple-700 text-xs px-2.5 py-0.5 rounded-full font-bold border border-purple-200">
+                  Admin
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-4">
+            {isAdmin && (
+              <button
+                onClick={() => router.push("/admin")}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100"
+              >
+                <Shield size={16} /> Admin Console
+              </button>
+            )}
+
             <button className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
               <Bell size={20} />
             </button>
@@ -275,25 +422,27 @@ export default function PsychEdDashboard() {
             >
               <LogOut size={16} /> Logout
             </button>
-
           </div>
         </header>
 
         <div className="flex-1 p-10 overflow-y-auto">
-
           {/* MAIN LEVEL: CLASS CARDS */}
           {nav.level === "main" && (
             <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {ACADEMIC_DATA.map(cls => (
+              {ACADEMIC_DATA.map((cls) => (
                 <div
                   key={cls.id}
-                  onClick={() => setNav({ level: "sub", classData: cls, folderData: null })}
+                  onClick={() =>
+                    setNav({ level: "sub", classData: cls, folderData: null })
+                  }
                   className="p-10 bg-white rounded-[3rem] border border-slate-100 cursor-pointer shadow-sm hover:shadow-2xl hover:shadow-indigo-100 transition-all group text-center"
                 >
                   <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
                     <BookOpen size={40} />
                   </div>
-                  <h3 className="text-3xl font-black text-slate-800 tracking-tight">{cls.title}</h3>
+                  <h3 className="text-3xl font-black text-slate-800 tracking-tight">
+                    {cls.title}
+                  </h3>
                   <p className="text-slate-400 font-medium mt-2">{cls.category}</p>
                   <div className="inline-flex items-center gap-2 text-indigo-600 font-bold mt-8 py-2 px-4 bg-indigo-50 rounded-xl group-hover:bg-indigo-600 group-hover:text-white transition-all">
                     Access Content <ChevronRight size={16} />
@@ -311,13 +460,26 @@ export default function PsychEdDashboard() {
                   key={i}
                   onClick={() =>
                     !sub.locked &&
-                    setNav({ level: "files", classData: nav.classData as ClassData, folderData: sub })
+                    setNav({
+                      level: "files",
+                      classData: nav.classData as ClassData,
+                      folderData: sub,
+                    })
                   }
-                  className={`p-8 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm transition-all group ${sub.locked ? "opacity-60 cursor-not-allowed grayscale" : "cursor-pointer hover:shadow-xl hover:-translate-y-1"
-                    }`}
+                  className={`p-8 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm transition-all group ${
+                    sub.locked
+                      ? "opacity-60 cursor-not-allowed grayscale"
+                      : "cursor-pointer hover:shadow-xl hover:-translate-y-1"
+                  }`}
                 >
                   <div className="flex justify-between items-start mb-6">
-                    <div className={`p-4 rounded-2xl ${sub.locked ? "bg-slate-100 text-slate-400" : "bg-indigo-50 text-indigo-600"}`}>
+                    <div
+                      className={`p-4 rounded-2xl ${
+                        sub.locked
+                          ? "bg-slate-100 text-slate-400"
+                          : "bg-indigo-50 text-indigo-600"
+                      }`}
+                    >
                       <Folder size={32} />
                     </div>
                     {sub.locked && (
@@ -326,9 +488,13 @@ export default function PsychEdDashboard() {
                       </div>
                     )}
                   </div>
-                  <h4 className="text-2xl font-black text-slate-800">{sub.title}</h4>
+                  <h4 className="text-2xl font-black text-slate-800">
+                    {sub.title}
+                  </h4>
                   <p className="text-sm text-slate-400 font-medium mt-2">
-                   
+                    {sub.locked
+                      ? "Locked for your tier"
+                      : "Click to explore materials"}
                   </p>
                 </div>
               ))}
@@ -339,52 +505,55 @@ export default function PsychEdDashboard() {
           {nav.level === "files" && (
             <div className="max-w-4xl mx-auto space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
               <div className="mb-8">
-                <h3 className="text-3xl font-black text-slate-800">{nav.folderData.title}</h3>
-                <p className="text-slate-400 font-medium tracking-tight">Select a document to view.</p>
+                <h3 className="text-3xl font-black text-slate-800">
+                  {nav.folderData.title}
+                </h3>
+                <p className="text-slate-400 font-medium tracking-tight">
+                  {visibleItems.length === 0
+                    ? "No documents assigned to your account yet. Contact your teacher or admin."
+                    : "Select a document to view."}
+                </p>
               </div>
+
               {visibleItems.map((pdf) => (
-                <div key={pdf.id} className="flex justify-between items-center p-6 bg-white border border-slate-100 rounded-[2rem]">
+                <div
+                  key={pdf.id}
+                  className="flex justify-between items-center p-6 bg-white border border-slate-100 rounded-[2rem] shadow-2xs hover:shadow-md transition-shadow"
+                >
                   <div className="flex items-center gap-5">
-                    <FileText size={24} />
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
+                      <FileText size={24} />
+                    </div>
                     <div>
                       <p className="font-bold text-slate-800">{pdf.title}</p>
                       <p className="text-xs text-slate-400 font-medium">
-                        {pdf.section === "flashcards" ? "Flashcards" : "Detailed Notes"}
+                        {pdf.section === "flashcards"
+                          ? "Flashcards"
+                          : "Detailed Notes"}
                       </p>
                     </div>
                   </div>
 
                   <button
                     onClick={() => setActivePdfId(pdf.id)}
-                    className="px-6 py-2.5 border-2 border-slate-900 rounded-xl font-bold"
+                    className="px-6 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl font-bold text-sm transition-all"
                   >
                     View PDF
                   </button>
                 </div>
               ))}
-
-
             </div>
           )}
-
         </div>
+
         {activePdfId && (
-          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
-            <div className="bg-white w-[90vw] h-[90vh] rounded-xl overflow-hidden relative">
-
-              <button
-                onClick={() => setActivePdfId(null)}
-                className="absolute top-4 right-4 z-50 bg-black text-white px-4 py-2 rounded"
-              >
-                Close
-              </button>
-
-              <PdfViewer pdfId={activePdfId} />
-
-            </div>
+          <div className="fixed inset-0 z-50 bg-black flex flex-col w-screen h-screen">
+            <PdfViewer
+              pdfId={activePdfId}
+              onClose={() => setActivePdfId(null)}
+            />
           </div>
         )}
-
       </main>
     </div>
   );
@@ -392,24 +561,50 @@ export default function PsychEdDashboard() {
 
 /* ================= HELPERS ================= */
 
-function NavItem({ icon, label, active }: { icon: React.ReactNode, label: string, active: boolean }) {
+function NavItem({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  onClick?: () => void;
+}) {
   return (
-    <button className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-bold transition-all ${active ? "bg-indigo-600 text-white shadow-lg shadow-indigo-100" : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"
-      }`}>
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-bold transition-all ${
+        active
+          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-100"
+          : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+      }`}
+    >
       {icon} <span className="text-sm">{label}</span>
     </button>
   );
 }
 
-function SidebarStat({ icon, title, sub, color }: { icon: React.ReactNode, title: string, sub: string, color: string }) {
+function SidebarStat({
+  icon,
+  title,
+  sub,
+  color,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  sub: string;
+  color: string;
+}) {
   return (
     <div className="flex gap-4 items-start">
-      <div className={`${color} p-2 rounded-xl shadow-sm`}>
-        {icon}
-      </div>
+      <div className={`${color} p-2 rounded-xl shadow-sm`}>{icon}</div>
       <div>
         <p className="text-sm font-bold text-slate-800">{title}</p>
-        <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">{sub}</p>
+        <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+          {sub}
+        </p>
       </div>
     </div>
   );
