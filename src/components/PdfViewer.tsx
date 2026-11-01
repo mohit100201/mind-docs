@@ -40,23 +40,6 @@ export function PdfViewer({
   >(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedRules, setCopiedRules] = useState(false);
-  const [isMobileDevice, setIsMobileDevice] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => {
-      const userAgent = navigator.userAgent || "";
-      const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        userAgent
-      );
-      const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-      const isSmallScreen = window.innerWidth < 768;
-      setIsMobileDevice(isMobileUA || (isTouch && isSmallScreen));
-    };
-
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -439,21 +422,10 @@ service firebase.storage {
           </div>
         )}
 
-        {/* PDF Document View */}
+        {/* PDF Document View: Always opens directly in Protected Cloud View */}
         {pdfUrl && !loading && !errorType && (
           <div className="w-full h-full flex-1 bg-slate-900">
-            {isMobileDevice ? (
-              <MobilePdfReader pdfUrl={pdfUrl} docTitle={docTitle} />
-            ) : (
-              <object
-                data={`${pdfUrl}#toolbar=0&navpanes=0&view=FitH`}
-                type="application/pdf"
-                className="w-full h-full border-0 block"
-              >
-                {/* Fallback to Mobile/Canvas reader if desktop object plugin is unsupported */}
-                <MobilePdfReader pdfUrl={pdfUrl} docTitle={docTitle} />
-              </object>
-            )}
+            <MobilePdfReader pdfUrl={pdfUrl} docTitle={docTitle} />
           </div>
         )}
       </div>

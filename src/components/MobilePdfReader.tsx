@@ -60,12 +60,16 @@ export function MobilePdfReader({ pdfUrl, docTitle }: MobilePdfReaderProps) {
           the external open button.
         */}
         <div
-          className="absolute top-0 right-0 w-24 h-24 z-30 pointer-events-auto cursor-default bg-transparent select-none touch-none"
+          className="absolute top-0 right-0 w-28 h-20 z-30 pointer-events-auto cursor-default bg-transparent select-none touch-none"
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
           }}
           onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
           }}
