@@ -15,10 +15,13 @@ import {
   formatCreationDate,
 } from "@/lib/firebase/adminService";
 import {
+  AcademicPdfItem,
   DETAILED_NOTES_CATALOG,
   FLASHCARDS_CATALOG,
   syncAllAcademicPdfs,
 } from "@/lib/firebase/academicContent";
+import { getLivePdfsList } from "@/lib/firebase/pdfStorageService";
+import { PdfManagerTab } from "@/components/admin/PdfManagerTab";
 import {
   Users,
   UserPlus,
@@ -51,6 +54,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
 
   // Users state
+  const [adminTab, setAdminTab] = useState<"users" | "materials">("users");
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "student" | "admin">("all");
@@ -75,6 +79,8 @@ export default function AdminPage() {
   const [newUserRole, setNewUserRole] = useState<"student" | "admin">("student");
   const [newUserAllowedPdfs, setNewUserAllowedPdfs] = useState<string[]>([]);
   const [newUserAllowedFlashcards, setNewUserAllowedFlashcards] = useState<string[]>([]);
+  const [notesCatalog, setNotesCatalog] = useState<AcademicPdfItem[]>(DETAILED_NOTES_CATALOG);
+  const [flashcardsCatalog, setFlashcardsCatalog] = useState<AcademicPdfItem[]>(FLASHCARDS_CATALOG);
   const [showPassword, setShowPassword] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
 
@@ -133,6 +139,17 @@ export default function AdminPage() {
       const list = await getAllUsers();
       setUsers(list);
       setHasPermissionError(false);
+
+      // Also refresh live PDF catalogs
+      try {
+        const liveList = await getLivePdfsList();
+        const liveNotes = liveList.filter((p) => p.section === "detailnotes");
+        const liveFlash = liveList.filter((p) => p.section === "flashcards");
+        if (liveNotes.length > 0) setNotesCatalog(liveNotes);
+        if (liveFlash.length > 0) setFlashcardsCatalog(liveFlash);
+      } catch {
+        // Fallback to static
+      }
     } catch (err: unknown) {
       const errorObj = err as { message?: string; code?: string };
       console.error("Error loading users:", err);
@@ -435,8 +452,56 @@ service cloud.firestore {
           </div>
         )}
 
-        {/* Welcome and Quick Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-3 border-b border-slate-200/80 pb-3">
+          <button
+            onClick={() => setAdminTab("users")}
+            className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-bold transition-all ${
+              adminTab === "users"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-100"
+                : "bg-white text-slate-600 hover:text-slate-900 border border-slate-200"
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>User Management</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                adminTab === "users"
+                  ? "bg-indigo-700 text-white"
+                  : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {users.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setAdminTab("materials")}
+            className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-bold transition-all ${
+              adminTab === "materials"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-100"
+                : "bg-white text-slate-600 hover:text-slate-900 border border-slate-200"
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Study Materials (PDFs)</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-black ${
+                adminTab === "materials"
+                  ? "bg-indigo-700 text-white"
+                  : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+              }`}
+            >
+              Upload &amp; Delete
+            </span>
+          </button>
+        </div>
+
+        {/* ================= TAB 1: USER MANAGEMENT ================= */}
+        {adminTab === "users" && (
+          <div className="space-y-8">
+            {/* Welcome and Quick Stats */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
@@ -724,7 +789,12 @@ service cloud.firestore {
             </table>
           </div>
         </div>
-      </main>
+      </div>
+    )}
+
+    {/* ================= TAB 2: STUDY MATERIALS (PDFs) ================= */}
+    {adminTab === "materials" && <PdfManagerTab />}
+  </main>
 
       {/* ================= MODAL: CONFIRM DELETE USER ================= */}
       {userToDelete && (
@@ -873,8 +943,8 @@ service cloud.firestore {
                     <button
                       type="button"
                       onClick={() => {
-                        setNewUserAllowedPdfs(DETAILED_NOTES_CATALOG.map((p) => p.id));
-                        setNewUserAllowedFlashcards(FLASHCARDS_CATALOG.map((p) => p.id));
+                        setNewUserAllowedPdfs(notesCatalog.map((p) => p.id));
+                        setNewUserAllowedFlashcards(flashcardsCatalog.map((p) => p.id));
                       }}
                       className="text-xs font-bold text-indigo-600 hover:underline"
                     >
@@ -900,7 +970,7 @@ service cloud.firestore {
                     📘 Detailed Notes (Class 12)
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1 border border-slate-100 rounded-xl bg-slate-50/50">
-                    {DETAILED_NOTES_CATALOG.map((note) => {
+                    {notesCatalog.map((note) => {
                       const checked = newUserAllowedPdfs.includes(note.id);
                       return (
                         <label
@@ -930,7 +1000,7 @@ service cloud.firestore {
                     🗂️ Flashcards Decks (Class 12)
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1 border border-slate-100 rounded-xl bg-slate-50/50">
-                    {FLASHCARDS_CATALOG.map((fc) => {
+                    {flashcardsCatalog.map((fc) => {
                       const checked = newUserAllowedFlashcards.includes(fc.id);
                       return (
                         <label

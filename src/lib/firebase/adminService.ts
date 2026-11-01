@@ -18,6 +18,14 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db, firebaseConfig } from "./firebase";
+import {
+  DETAILED_NOTES_CATALOG,
+  FLASHCARDS_CATALOG,
+} from "./academicContent";
+
+export const ADMIN_EMAILS = [
+  "mohitkhandelwal9784@gmail.com",
+];
 
 export const DEFAULT_ADMIN_EMAIL = "mohitkhandelwal9784@gmail.com";
 
@@ -30,8 +38,18 @@ export function getAdminEmail(): string {
 
 export function isUserAdmin(email?: string | null, role?: string | null): boolean {
   if (!email && !role) return false;
+  const emailLower = (email || "").toLowerCase();
+  // Ensure mohitkhandelwal978428@gmail.com is strictly a student
+  if (emailLower === "mohitkhandelwal978428@gmail.com") {
+    return false;
+  }
+  if (
+    emailLower === getAdminEmail() ||
+    ADMIN_EMAILS.includes(emailLower)
+  ) {
+    return true;
+  }
   if (role === "admin") return true;
-  if (email && email.toLowerCase() === getAdminEmail()) return true;
   return false;
 }
 
@@ -237,13 +255,38 @@ export async function getAllUsers(): Promise<UserProfile[]> {
         : "Student";
     }
 
+    let userRole = data.role || (isUserAdmin(email) ? "admin" : "student");
+    let allowedPdfs = data.allowedPdfs || [];
+    let allowedFlashCards = data.allowedFlashCards || [];
+
+    // Force mohitkhandelwal978428@gmail.com to be a student and persist in Firestore
+    if (email === "mohitkhandelwal978428@gmail.com") {
+      userRole = "student";
+      const studentUpdates: Record<string, unknown> = {};
+      if (data.role === "admin") {
+        studentUpdates.role = "student";
+      }
+      if (allowedPdfs.length === 0) {
+        allowedPdfs = DETAILED_NOTES_CATALOG.map((c) => c.id);
+        studentUpdates.allowedPdfs = allowedPdfs;
+      }
+      if (allowedFlashCards.length === 0) {
+        allowedFlashCards = FLASHCARDS_CATALOG.map((c) => c.id);
+        studentUpdates.allowedFlashCards = allowedFlashCards;
+      }
+      if (Object.keys(studentUpdates).length > 0) {
+        studentUpdates.updatedAt = serverTimestamp();
+        updateDoc(doc(db, "users", d.id), studentUpdates).catch(() => {});
+      }
+    }
+
     list.push({
       uid: d.id,
       displayName: displayName || "Enrolled Student",
       email: email,
-      role: data.role || (isUserAdmin(email) ? "admin" : "student"),
-      allowedPdfs: data.allowedPdfs || [],
-      allowedFlashCards: data.allowedFlashCards || [],
+      role: userRole,
+      allowedPdfs,
+      allowedFlashCards,
       createdAt: createdAt || null,
       updatedAt: data.updatedAt || null,
     });
@@ -359,6 +402,8 @@ export async function syncUserProfile(
 
     if (shouldBeAdmin && existingData.role !== "admin") {
       updates.role = "admin";
+    } else if (!shouldBeAdmin && existingData.role === "admin") {
+      updates.role = "student";
     }
     if (!existingData.email && email) {
       updates.email = email.toLowerCase();

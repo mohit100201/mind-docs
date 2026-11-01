@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// Firebase Storage Rules for Psyched by Healora
+// Grants read access to authenticated students and full upload/delete access to admins
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "mohitkhandelwal9784@gmail.com" ||
+        (request.auth.token.email != "mohitkhandelwal978428@gmail.com" &&
+         firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+         firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == "admin")
+      );
+    }
+
+    // Study material folders: eleventh/, twelfth/
+    match /{classLevel}/{section}/{fileName} {
+      // Authenticated students can read and stream PDFs for reading
+      allow read: if isAuthenticated();
+
+      // Only admins can upload or delete PDF materials
+      allow write: if isAdmin();
+    }
+
+    // Default fallback for any other files in storage bucket
+    match /{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}
+

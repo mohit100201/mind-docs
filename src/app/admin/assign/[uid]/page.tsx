@@ -13,9 +13,11 @@ import {
   formatCreationDate,
 } from "@/lib/firebase/adminService";
 import {
+  AcademicPdfItem,
   DETAILED_NOTES_CATALOG,
   FLASHCARDS_CATALOG,
 } from "@/lib/firebase/academicContent";
+import { getLivePdfsList } from "@/lib/firebase/pdfStorageService";
 import {
   ArrowLeft,
   CheckCircle,
@@ -51,6 +53,10 @@ export default function AssignAccessPage() {
   const [selectedPdfs, setSelectedPdfs] = useState<string[]>([]);
   const [selectedFlashcards, setSelectedFlashcards] = useState<string[]>([]);
 
+  // Catalogs (dynamic with static fallback)
+  const [notesCatalog, setNotesCatalog] = useState<AcademicPdfItem[]>(DETAILED_NOTES_CATALOG);
+  const [flashcardsCatalog, setFlashcardsCatalog] = useState<AcademicPdfItem[]>(FLASHCARDS_CATALOG);
+
   // Alert
   const [alert, setAlert] = useState<{
     type: "success" | "error";
@@ -82,6 +88,17 @@ export default function AssignAccessPage() {
       }
 
       setIsAdmin(true);
+
+      // Load dynamic PDF catalog from Firestore
+      try {
+        const liveList = await getLivePdfsList();
+        const liveNotes = liveList.filter((p) => p.section === "detailnotes");
+        const liveFlash = liveList.filter((p) => p.section === "flashcards");
+        if (liveNotes.length > 0) setNotesCatalog(liveNotes);
+        if (liveFlash.length > 0) setFlashcardsCatalog(liveFlash);
+      } catch {
+        // Fallback to static lists
+      }
 
       // Fetch target user data
       if (uid) {
@@ -135,7 +152,7 @@ export default function AssignAccessPage() {
   };
 
   const selectAllNotes = () => {
-    setSelectedPdfs(DETAILED_NOTES_CATALOG.map((c) => c.id));
+    setSelectedPdfs(notesCatalog.map((c) => c.id));
   };
 
   const deselectAllNotes = () => {
@@ -143,7 +160,7 @@ export default function AssignAccessPage() {
   };
 
   const selectAllFlashcards = () => {
-    setSelectedFlashcards(FLASHCARDS_CATALOG.map((c) => c.id));
+    setSelectedFlashcards(flashcardsCatalog.map((c) => c.id));
   };
 
   const deselectAllFlashcards = () => {
@@ -151,8 +168,8 @@ export default function AssignAccessPage() {
   };
 
   const grantAllContent = () => {
-    setSelectedPdfs(DETAILED_NOTES_CATALOG.map((c) => c.id));
-    setSelectedFlashcards(FLASHCARDS_CATALOG.map((c) => c.id));
+    setSelectedPdfs(notesCatalog.map((c) => c.id));
+    setSelectedFlashcards(flashcardsCatalog.map((c) => c.id));
   };
 
   const revokeAllContent = () => {
@@ -237,10 +254,10 @@ export default function AssignAccessPage() {
     );
   }
 
-  const notesCount = selectedPdfs.length;
-  const totalNotes = DETAILED_NOTES_CATALOG.length;
-  const flashCount = selectedFlashcards.length;
-  const totalFlash = FLASHCARDS_CATALOG.length;
+  const notesCount = selectedPdfs.filter((id) => notesCatalog.some((n) => n.id === id)).length;
+  const totalNotes = notesCatalog.length;
+  const flashCount = selectedFlashcards.filter((id) => flashcardsCatalog.some((f) => f.id === id)).length;
+  const totalFlash = flashcardsCatalog.length;
   const initialLetter = (displayName || email || "S")[0]?.toUpperCase() || "S";
 
   return (
@@ -501,7 +518,7 @@ export default function AssignAccessPage() {
                 onClick={selectAllNotes}
                 className="px-3.5 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition-all"
               >
-                Select All 7 Notes
+                Select All {totalNotes} Notes
               </button>
               <button
                 type="button"
@@ -514,7 +531,7 @@ export default function AssignAccessPage() {
           </div>
 
           <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-3.5">
-            {DETAILED_NOTES_CATALOG.map((note, index) => {
+            {notesCatalog.map((note, index) => {
               const isChecked = selectedPdfs.includes(note.id);
               return (
                 <div
@@ -586,7 +603,7 @@ export default function AssignAccessPage() {
                 onClick={selectAllFlashcards}
                 className="px-3.5 py-1.5 text-xs font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition-all"
               >
-                Select All 7 Decks
+                Select All {totalFlash} Decks
               </button>
               <button
                 type="button"
@@ -599,7 +616,7 @@ export default function AssignAccessPage() {
           </div>
 
           <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-3.5">
-            {FLASHCARDS_CATALOG.map((deck, index) => {
+            {flashcardsCatalog.map((deck, index) => {
               const isChecked = selectedFlashcards.includes(deck.id);
               return (
                 <div

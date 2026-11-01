@@ -1,7 +1,7 @@
 "use client";
 
 import { auth, storage, db } from "@/lib/firebase/firebase";
-import { ref, getDownloadURL } from "firebase/storage";
+import { ref, getDownloadURL, listAll, getMetadata } from "firebase/storage";
 import { doc, getDoc } from "firebase/firestore";
 import { useEffect, useState, useRef } from "react";
 import {
@@ -40,6 +40,9 @@ export function PdfViewer({
   >(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedRules, setCopiedRules] = useState(false);
+  const [availableFileList, setAvailableFileList] = useState<string[]>([]);
+  const [targetStoragePath, setTargetStoragePath] = useState<string>("");
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -114,26 +117,37 @@ service firebase.storage {
         }
 
         // 1. Find catalog item metadata
-        const catalogItem =
-          DETAILED_NOTES_CATALOG.find((x) => x.id === pdfId) ||
-          FLASHCARDS_CATALOG.find((x) => x.id === pdfId);
+        // 1. Prioritize live Firestore document for accurate storage path & title
+        let storagePath = "";
+        let foundTitle = "";
 
-        if (catalogItem?.title) {
-          setDocTitle(catalogItem.title);
+        try {
+          const pdfDoc = await getDoc(doc(db, "pdfs", pdfId));
+          if (pdfDoc.exists()) {
+            const data = pdfDoc.data();
+            storagePath = data?.storagePath || "";
+            foundTitle = data?.title || "";
+          }
+        } catch (docErr) {
+          console.warn("Could not fetch document from Firestore pdfs collection:", docErr);
         }
 
-        let storagePath = catalogItem?.storagePath || "";
-
-        // If not in static catalog, check Firestore pdfs collection
+        // Fallback to static catalog if Firestore didn't have storagePath
         if (!storagePath) {
-          try {
-            const pdfDoc = await getDoc(doc(db, "pdfs", pdfId));
-            if (pdfDoc.exists()) {
-              storagePath = pdfDoc.data()?.storagePath || "";
-            }
-          } catch {
-            // ignore
+          const catalogItem =
+            DETAILED_NOTES_CATALOG.find((x) => x.id === pdfId) ||
+            FLASHCARDS_CATALOG.find((x) => x.id === pdfId);
+
+          if (catalogItem?.storagePath) {
+            storagePath = catalogItem.storagePath;
           }
+          if (catalogItem?.title && !foundTitle) {
+            foundTitle = catalogItem.title;
+          }
+        }
+
+        if (foundTitle) {
+          setDocTitle(foundTitle);
         }
 
         if (!storagePath) {
@@ -168,12 +182,23 @@ service firebase.storage {
           }
         }
 
-        // 3. Generate direct Firebase Storage URL
+        setTargetStoragePath(storagePath);
+
+        // 3. Generate direct Firebase Storage URL with known naming variants
         const pathVariants = [
           storagePath,
           storagePath.trim(),
           storagePath.replace(/\s+\.pdf$/i, ".pdf"),
           storagePath.replace(/\.pdf$/i, " .pdf"),
+          storagePath.replace(/ATTITUDE AND SOCIAL COGNITION/i, "Attitude and Social Cognition"),
+          storagePath.replace(/ATTITUDE AND SOCIAL COGNITION/i, "Attitude and social cognition"),
+          storagePath.replace(/ATTITUDE AND SOCIAL COGNITION/i, "attitude and social cognition"),
+          storagePath.replace(/Chapter 6 ATTITUDE/i, "CHAPTER 6 ATTITUDE"),
+          storagePath.replace(/Chapter 6 ATTITUDE/i, "Psychology Chapter 6"),
+          storagePath.replace(/Chapter 6 ATTITUDE/i, "Psychology CHAPTER 6"),
+          storagePath.replace(/SOCIAL INFLUENCE AND GROUP PROCESSES/i, "Social Influence and Group Processes"),
+          storagePath.replace(/SOCIAL INFLUENCE AND GROUP PROCESSES/i, "Social influence and group processes"),
+          storagePath.replace(/CHAPTER 3 MEETING LIFE CHALLENGES/i, "Chapter 3 Meeting Life Challenges"),
         ];
 
         let downloadUrl: string | null = null;
@@ -183,9 +208,128 @@ service firebase.storage {
           try {
             const fileRef = ref(storage, path);
             downloadUrl = await getDownloadURL(fileRef);
-            if (downloadUrl) break;
+            if (downloadUrl) {
+              setTargetStoragePath(path);
+              break;
+            }
           } catch (err) {
             lastError = err;
+          }
+        }
+
+        // 4. Dynamic Discovery: If direct paths failed, search the folder dynamically using listAll
+        const folderPath = storagePath.substring(0, storagePath.lastIndexOf("/"));
+        let foundFiles: string[] = [];
+
+        if (!downloadUrl && folderPath) {
+          try {
+            const folderRef = ref(storage, folderPath);
+            const listResult = await listAll(folderRef);
+            foundFiles = listResult.items.map((i) => i.name);
+            setAvailableFileList(foundFiles);
+            console.log(`[Storage Inspection] Files found in "${folderPath}":`, foundFiles);
+
+            const expectedFileName = storagePath.substring(storagePath.lastIndexOf("/") + 1).trim();
+            const chMatch = pdfId.match(/(\d+)/);
+            const chNum = chMatch ? chMatch[1] : "";
+
+            // Match priority: exact name -> chapter number -> keyword
+            const matchedItem = listResult.items.find((item) => {
+              const nameLower = item.name.toLowerCase();
+              if (item.name === expectedFileName || item.name.trim() === expectedFileName) {
+                return true;
+              }
+              if (item.name.replace(/\s+\.pdf$/i, ".pdf") === expectedFileName.replace(/\s+\.pdf$/i, ".pdf")) {
+                return true;
+              }
+              if (chNum) {
+                const patterns = [
+                  `chapter ${chNum}`,
+                  `chapter${chNum}`,
+                  `ch ${chNum}`,
+                  `ch${chNum}`,
+                  `chapter_${chNum}`,
+                  `ch_${chNum}`,
+                ];
+                if (patterns.some((p) => nameLower.includes(p))) {
+                  return true;
+                }
+              }
+              if (pdfId.includes("ch6") || storagePath.toLowerCase().includes("attitude")) {
+                if (nameLower.includes("attitude")) return true;
+              }
+              if (pdfId.includes("ch7") || storagePath.toLowerCase().includes("influence")) {
+                if (nameLower.includes("influence") || nameLower.includes("social")) return true;
+              }
+              if (pdfId.includes("ch3") || storagePath.toLowerCase().includes("challenges")) {
+                if (nameLower.includes("challenges") || nameLower.includes("meeting")) return true;
+              }
+              return false;
+            });
+
+            if (matchedItem) {
+              setTargetStoragePath(matchedItem.fullPath);
+              try {
+                const freshRef = ref(storage, matchedItem.fullPath);
+                downloadUrl = await getDownloadURL(freshRef);
+                console.log(`[Storage Inspection] Resolved via freshRef getDownloadURL: "${matchedItem.fullPath}"`);
+              } catch {
+                try {
+                  downloadUrl = await getDownloadURL(matchedItem);
+                  console.log(`[Storage Inspection] Resolved via matchedItem getDownloadURL: "${matchedItem.fullPath}"`);
+                } catch (err: unknown) {
+                  console.warn("getDownloadURL failed on matchedItem:", matchedItem.fullPath, err);
+                  lastError = err;
+
+                  // Fallback: extract download token from object metadata directly
+                  try {
+                    const meta = await getMetadata(matchedItem);
+                    const metaRecord = meta as unknown as Record<string, unknown>;
+                    const rawTokens = metaRecord.downloadTokens;
+                    const token = Array.isArray(rawTokens)
+                      ? (rawTokens[0] as string)
+                      : typeof rawTokens === "string"
+                      ? rawTokens.split(",")[0]
+                      : "";
+                    if (token) {
+                      const bucket =
+                        matchedItem.bucket ||
+                        storage.app.options.storageBucket ||
+                        "mind-docs.firebasestorage.app";
+                      downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
+                        matchedItem.fullPath
+                      )}?alt=media&token=${token}`;
+                      console.log(`[Storage Inspection] Resolved via metadata token: "${downloadUrl}"`);
+                    }
+                  } catch (metaErr) {
+                    console.warn("getMetadata failed:", metaErr);
+                  }
+                }
+              }
+            }
+          } catch (listErr) {
+            console.warn("Could not list folder contents:", listErr);
+          }
+        }
+
+        // 5. Fallback: try calling server API route BEFORE failing
+        if (!downloadUrl) {
+          try {
+            const token = await currentUser.getIdToken();
+            const res = await fetch(`/api/pdf/${pdfId}`, {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data?.url && !cancelled) {
+                downloadUrl = data.url;
+              }
+            }
+          } catch {
+            // ignore API fallback failure
           }
         }
 
@@ -195,6 +339,8 @@ service firebase.storage {
         }
 
         const errCode = (lastError as { code?: string })?.code || "";
+        const errMessage = (lastError as { message?: string })?.message || String(lastError || "");
+        setErrorDetails(`${errCode ? errCode + ": " : ""}${errMessage}`);
 
         if (errCode === "storage/unauthorized") {
           setErrorType("storage-rules");
@@ -204,32 +350,12 @@ service firebase.storage {
           return;
         }
 
-        if (errCode === "storage/object-not-found") {
+        if (errCode === "storage/object-not-found" || !downloadUrl) {
           setErrorType("not-found");
           setErrorMessage(
-            `File not found in Firebase Storage at: "${storagePath}". Please verify that this file has been uploaded to your Firebase Storage bucket.`
+            `File not found in Firebase Storage at: "${storagePath}". Please check the files in your Firebase Storage bucket.`
           );
           return;
-        }
-
-        // 4. Fallback: try calling server API route
-        try {
-          const token = await currentUser.getIdToken();
-          const res = await fetch(`/api/pdf/${pdfId}`, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            if (data?.url && !cancelled) {
-              setPdfUrl(data.url);
-              return;
-            }
-          }
-        } catch {
-          // ignore API fallback failure
         }
 
         throw lastError || new Error("Could not retrieve study material");
@@ -392,14 +518,52 @@ service firebase.storage {
 
         {/* File Not Found */}
         {errorType === "not-found" && (
-          <div className="p-8 max-w-md mx-auto my-auto bg-white rounded-3xl border border-slate-200 text-center shadow-lg">
+          <div className="p-8 max-w-lg mx-auto my-auto bg-white rounded-3xl border border-slate-200 text-center shadow-lg">
             <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4">
               <FileText className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-black text-slate-900">File Not Found</h3>
+            <h3 className="text-lg font-black text-slate-900">File Not Found in Storage</h3>
             <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-              {errorMessage}
+              Target path: <code className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono text-[11px]">{targetStoragePath}</code>
             </p>
+
+            {errorDetails && (
+              <p className="mt-2 text-[11px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2 font-mono text-left overflow-x-auto">
+                Diagnostics: {errorDetails}
+              </p>
+            )}
+
+            {availableFileList.length > 0 ? (
+              <div className="mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left">
+                <p className="text-xs font-bold text-slate-700 mb-2">
+                  Files currently in this Storage folder ({availableFileList.length}):
+                </p>
+                <ul className="text-xs text-slate-600 space-y-1 font-mono max-h-40 overflow-y-auto">
+                  {availableFileList.map((f, i) => (
+                    <li key={i} className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></span>
+                      <span className="truncate">{f}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div className="mt-4 p-4 bg-amber-50 rounded-2xl border border-amber-200 text-left text-xs text-amber-800">
+                <p className="font-bold mb-1.5">Where to check in Firebase Console:</p>
+                <ol className="list-decimal list-inside space-y-1 text-slate-600">
+                  <li>Go to <strong>Firebase Console &gt; Storage &gt; Files</strong></li>
+                  <li>Click into folder: <strong>twelfth &gt; detailnotes</strong></li>
+                  <li>Verify if Chapter 6 is uploaded or if the file name has different spelling.</li>
+                </ol>
+              </div>
+            )}
+
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-5 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Retry Loading
+            </button>
           </div>
         )}
 
